@@ -3,6 +3,7 @@ name = "botdetection"
 version = "0.1.0"
 description = "Add your description here"
 authors = [
+    { name = "Markus Heiser", email = "markus.heiser@darmarIT.de" },
     { name = "Alexandre Flament", email = "alex.andre@al-f.net" }
 ]
 dependencies = [
