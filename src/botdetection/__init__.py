@@ -50,7 +50,7 @@ class Filter:
 
 
 def install_botdetection(app: Flask, redis: Redis, config: Config, filter: Filter):
-    app.botdetection = BotDetectionMiddleware(app, redis, config, filter)
+    app.botdetection = BotDetection(app, redis, config, filter)
 
 
 class BotFilter(Enum):
@@ -86,7 +86,7 @@ class ComposedFilter(Filter):
         return None
 
 
-class BotDetectionMiddleware:
+class BotDetection:
     def __init__(self, app: Flask, redis: Redis, config: Config, filter: Filter):
         self.app = app
         self.config = config
@@ -101,8 +101,8 @@ class BotDetectionMiddleware:
     def register_before_request(self):
         @self.app.before_request
         def before_request():
-            real_ip = ip_address(get_real_ip(request))
-            network = get_network(real_ip, self.config)
+            real_ip = ip_address(get_real_ip(self.config, request))
+            network = get_network(self.config, real_ip)
             if network.is_link_local:
                 return None
             # block- & pass- lists

@@ -128,8 +128,8 @@ def ping(redislib: RedisLib, config: Config, request: flask.Request, token: str)
     if not token_is_valid(redislib, config, token):
         return
 
-    real_ip = ip_address(get_real_ip(request))
-    network = get_network(real_ip, config)
+    real_ip = ip_address(get_real_ip(config, request))
+    network = get_network(config, real_ip)
 
     ping_key = get_ping_key(redislib, network, request)
     logger.debug(

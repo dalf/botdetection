@@ -14,7 +14,7 @@ from ipaddress import (
 import flask
 import werkzeug
 
-from . import config
+from .config import Config
 
 logger = logging.getLogger("botdetection")
 
@@ -46,13 +46,13 @@ def too_many_requests(network: IPv4Network | IPv6Network, log_msg: str) -> werkz
     return flask.make_response(("Too Many Requests", 429))
 
 
-def get_network(real_ip: IPv4Address | IPv6Address, cfg: config.Config) -> IPv4Network | IPv6Network:
+def get_network(config: Config, real_ip: IPv4Address | IPv6Address) -> IPv4Network | IPv6Network:
     """Returns the (client) network of whether the real_ip is part of."""
 
     if real_ip.version == 6:
-        prefix = cfg.real_ip.ipv6_prefix
+        prefix = config.real_ip.ipv6_prefix
     else:
-        prefix = cfg.real_ip.ipv4_prefix
+        prefix = config.real_ip.ipv4_prefix
     network = ip_network(f"{real_ip}/{prefix}", strict=False)
     # logger.debug("get_network(): %s", network.compressed)
     return network
@@ -67,7 +67,7 @@ def _log_error_only_once(err_msg):
         _logged_errors.append(err_msg)
 
 
-def get_real_ip(request: flask.Request) -> str:
+def get_real_ip(config: Config, request: flask.Request) -> str:
     """Returns real IP of the request.  Since not all proxies set all the HTTP
     headers and incoming headers can be faked it may happen that the IP cannot
     be determined correctly.
@@ -105,9 +105,7 @@ def get_real_ip(request: flask.Request) -> str:
         _log_error_only_once("X-Forwarded-For header is not set!")
     else:
         forwarded_for = [x.strip() for x in forwarded_for.split(",")]
-        # FIXME
-        x_for: int = ctx.cfg["real_ip.x_for"]  # type: ignore
-        forwarded_for = forwarded_for[-min(len(forwarded_for), x_for)]
+        forwarded_for = forwarded_for[-min(len(forwarded_for), config.real_ip.x_for)]
 
     if not real_ip:
         _log_error_only_once("X-Real-IP header is not set!")

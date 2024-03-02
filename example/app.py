@@ -6,19 +6,18 @@ from botdetection import install_botdetection, ComposedFilter, Config, BotFilter
 
 from api_rate_limit import api_rate_filter_request
 
+
 app = Flask("botdetection demo")
 
 
 # Registering the middleware
 def get_config() -> Config:
-    config_raw = {
-        "real_ip": {},
-        "botdetection": {},
-    }
+    config_raw = {}
     try:
-        with open("schema.toml", "rb") as f:
+        with open("config.toml", "rb") as f:
             config_raw = tomllib.load(f)
     except IOError:
+        print("Error loading config.toml")
         pass
     return Config(**config_raw)
 
