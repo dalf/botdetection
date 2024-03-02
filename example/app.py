@@ -2,7 +2,7 @@ import tomllib
 
 from redis import Redis
 from flask import Flask, render_template
-from botdetection import install_botdetection, ComposedFilter, Config, BotFilter
+from botdetection import install_botdetection, RouteFilter, Config, BotFilter
 
 from api_rate_limit import api_rate_filter_request
 
@@ -25,7 +25,7 @@ def get_config() -> Config:
 redis = Redis.from_url("redis://localhost:6379/0")
 
 
-composed_filter = ComposedFilter(
+route_filter = RouteFilter(
     {
         "/healthz": [],
         "/search": [
@@ -43,7 +43,7 @@ composed_filter = ComposedFilter(
 )
 
 
-install_botdetection(app, redis, get_config(), composed_filter)
+install_botdetection(app, redis, get_config(), route_filter)
 
 
 @app.route("/")

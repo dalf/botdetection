@@ -62,8 +62,8 @@ class BotFilter(Enum):
     ip_limit = botdetection.ip_limit.filter_request
 
 
-class ComposedFilter(Filter):
-    def __init__(self, filters: dict[str, BotFilter]):
+class RouteFilter(Filter):
+    def __init__(self, filters: dict[str, list[BotFilter]]):
         self.filters = filters
 
     def __call__(
@@ -73,6 +73,7 @@ class ComposedFilter(Filter):
         network: IPv4Network | IPv6Network,
         request: Request,
     ) -> werkzeug.Response | None:
+        # FIXME: request.path is not the route
         f_list = self.filters.get(request.path)
         if f_list is None:
             f_list = self.filters.get("*")
