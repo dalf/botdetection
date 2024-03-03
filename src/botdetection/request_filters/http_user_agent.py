@@ -20,7 +20,9 @@ import re
 import flask
 import werkzeug
 
-from . import RequestContext, RequestInfo, too_many_requests
+from .._helpers import too_many_requests
+from .._request_info import RequestInfo
+from .._request_context import RequestContext
 
 
 USER_AGENT = (

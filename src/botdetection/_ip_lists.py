@@ -42,20 +42,20 @@ from ipaddress import (
     IPv6Network,
 )
 
-from . import config
+from botdetection.config import Config
 from ._helpers import logger
 
 logger = logger.getChild("ip_limit")
 
 
-def pass_ip(real_ip: IPv4Address | IPv6Address, cfg: config.Config) -> Tuple[bool, str]:
+def pass_ip(real_ip: IPv4Address | IPv6Address, cfg: Config) -> Tuple[bool, str]:
     """Checks if the IP on the subnet is in one of the members of the
     ``botdetection.ip_lists.pass_ip`` list.
     """
     return _ip_is_subnet_of_member_in_list(real_ip, cfg.botdetection.ip_lists.pass_ip, "pass_ip")
 
 
-def block_ip(real_ip: IPv4Address | IPv6Address, cfg: config.Config) -> Tuple[bool, str]:
+def block_ip(real_ip: IPv4Address | IPv6Address, cfg: Config) -> Tuple[bool, str]:
     """Checks if the IP on the subnet is in one of the members of the
     ``botdetection.ip_lists.block_ip`` list.
     """

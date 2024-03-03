@@ -20,7 +20,9 @@ from __future__ import annotations
 import flask
 import werkzeug
 
-from . import RequestContext, RequestInfo, too_many_requests
+from .._helpers import too_many_requests
+from .._request_info import RequestInfo
+from .._request_context import RequestContext
 
 
 def filter_request(

@@ -66,9 +66,9 @@ import random
 import flask
 import logging
 
-from . import RequestInfo
+from ._request_info import RequestInfo
 from .config import Config
-from .redislib import RedisLib
+from ._redislib import RedisLib
 
 
 logger = logging.getLogger(__name__)
@@ -123,8 +123,8 @@ class LinkToken:
 
         logger.debug(
             "store ping_key for (client) network %s (IP %s) -> %s",
-            self.network.compressed,
-            self.real_ip,
+            self.request_info.network.compressed,
+            self.request_info.real_ip,
             self.ping_key,
         )
 

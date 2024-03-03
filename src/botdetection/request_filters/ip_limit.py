@@ -61,7 +61,9 @@ import flask
 import werkzeug
 from logging import getLogger
 
-from . import RequestContext, RequestInfo, too_many_requests
+from .._helpers import too_many_requests
+from .._request_info import RequestInfo
+from .._request_context import RequestContext
 
 
 logger = getLogger(__name__)

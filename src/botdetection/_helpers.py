@@ -14,7 +14,7 @@ from ipaddress import (
 import flask
 import werkzeug
 
-from . import RequestInfo
+from ._request_info import RequestInfo
 from .config import Config
 
 logger = logging.getLogger("botdetection")
