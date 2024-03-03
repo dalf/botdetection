@@ -3,7 +3,7 @@ import logging
 import tomllib
 
 from redis import Redis
-from flask import Flask, render_template
+from flask import Flask, render_template, request
 from botdetection import install_botdetection, RouteFilter, Config, PredefinedRequestFilter
 
 from api_rate_limit import api_rate_filter_request
@@ -25,7 +25,10 @@ def get_config() -> Config:
     return Config(**config_raw)
 
 
-redis = Redis.from_url("redis://localhost:6379/0")
+if os.getenv("REDIS", "1") == "1":
+    redis = Redis.from_url("redis://localhost:6379/0")
+else:
+    redis = None
 
 
 route_filter = RouteFilter(
@@ -57,7 +60,25 @@ else:
 def index():
     # no need to specify the link_token variable:
     # install_botdetection makes sure it is set in the template
-    return render_template("index.html")
+
+    # get the real_ip if botdetection is enabled
+    botdetection_enabled = False
+    link_token = False
+
+    botdetection_context = getattr(request, "botdetection_context", None)
+    if botdetection_context:
+        ip = request.botdetection_request_info.real_ip
+        botdetection_enabled = True
+        link_token = botdetection_context.link_token is not None
+    else:
+        ip = request.remote_addr
+
+    return render_template(
+        "index.html", 
+        ip = ip,
+        botdetection_enabled = botdetection_enabled,
+        link_token = link_token,
+    )
 
 
 @app.route("/search")
