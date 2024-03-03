@@ -56,24 +56,15 @@ Implementations
 
 """
 from __future__ import annotations
-from ipaddress import (
-    IPv4Network,
-    IPv6Network,
-)
 
 import flask
 import werkzeug
+from logging import getLogger
 
-from .redislib import RedisLib
-from . import link_token
-from . import config
-from ._helpers import (
-    too_many_requests,
-    logger,
-)
+from . import RequestContext, RequestInfo, too_many_requests
 
 
-logger = logger.getChild("ip_limit")
+logger = getLogger(__name__)
 
 BURST_WINDOW = 20
 """Time (sec) before sliding window for *burst* requests expires."""
@@ -101,54 +92,53 @@ SUSPICIOUS_IP_MAX = 3
 
 
 def filter_request(
-    redislib: RedisLib,
-    cfg: config.Config,
-    network: IPv4Network | IPv6Network,
+    context: RequestContext,
+    request_info: RequestInfo,
     request: flask.Request,
 ) -> werkzeug.Response | None:
-    # pylint: disable=too-many-return-statements
+    if context.redislib is None or context.link_token is None:
+        return filter_request_no_linktoken(context, request_info, request)
 
-    if network.is_link_local and not cfg.botdetection.ip_limit.filter_link_local:
-        logger.debug(
-            "network %s is link-local -> not monitored by ip_limit method",
-            network.compressed,
+    suspicious = context.link_token.is_suspicious(True)
+
+    if not suspicious:
+        # this IP is no longer suspicious: release ip again / delete the counter of this IP
+        context.redislib.drop_counter("ip_limit.SUSPICIOUS_IP_WINDOW" + request_info.network.compressed)
+        return None
+
+    # this IP is suspicious: count requests from this IP
+    c = context.redislib.incr_sliding_window("ip_limit.SUSPICIOUS_IP_WINDOW" + request_info.network.compressed, SUSPICIOUS_IP_WINDOW)
+    if c > SUSPICIOUS_IP_MAX:
+        logger.error(
+            "BLOCK: too many request from %s in SUSPICIOUS_IP_WINDOW (redirect to /)",
+            request_info.network,
         )
-        return None
+        # FIXME: this is SearXNG specific
+        return flask.redirect(flask.url_for("index"), code=302)
 
-    if cfg.botdetection.ip_limit.link_token:
-        suspicious = link_token.is_suspicious(redislib.redis, cfg, network, request, True)
+    c = context.redislib.incr_sliding_window("ip_limit.BURST_WINDOW" + request_info.network.compressed, BURST_WINDOW)
+    if c > BURST_MAX_SUSPICIOUS:
+        return too_many_requests(request_info, "too many request in BURST_WINDOW (BURST_MAX_SUSPICIOUS)")
 
-        if not suspicious:
-            # this IP is no longer suspicious: release ip again / delete the counter of this IP
-            redislib.drop_counter("ip_limit.SUSPICIOUS_IP_WINDOW" + network.compressed)
-            return None
+    c = context.redislib.incr_sliding_window("ip_limit.LONG_WINDOW" + request_info.network.compressed, LONG_WINDOW)
+    if c > LONG_MAX_SUSPICIOUS:
+        return too_many_requests(request_info, "too many request in LONG_WINDOW (LONG_MAX_SUSPICIOUS)")
 
-        # this IP is suspicious: count requests from this IP
-        c = redislib.incr_sliding_window("ip_limit.SUSPICIOUS_IP_WINDOW" + network.compressed, SUSPICIOUS_IP_WINDOW)
-        if c > SUSPICIOUS_IP_MAX:
-            logger.error(
-                "BLOCK: too many request from %s in SUSPICIOUS_IP_WINDOW (redirect to /)",
-                network,
-            )
-            return flask.redirect(flask.url_for("index"), code=302)
+    return None
 
-        c = redislib.incr_sliding_window("ip_limit.BURST_WINDOW" + network.compressed, BURST_WINDOW)
-        if c > BURST_MAX_SUSPICIOUS:
-            return too_many_requests(network, "too many request in BURST_WINDOW (BURST_MAX_SUSPICIOUS)")
 
-        c = redislib.incr_sliding_window("ip_limit.LONG_WINDOW" + network.compressed, LONG_WINDOW)
-        if c > LONG_MAX_SUSPICIOUS:
-            return too_many_requests(network, "too many request in LONG_WINDOW (LONG_MAX_SUSPICIOUS)")
-
-        return None
-
+def filter_request_no_linktoken(
+    context: RequestContext,
+    request_info: RequestInfo,
+    request: flask.Request,
+) -> werkzeug.Response | None:
     # vanilla limiter without extensions counts BURST_MAX and LONG_MAX
-    c = redislib.incr_sliding_window("ip_limit.BURST_WINDOW" + network.compressed, BURST_WINDOW)
+    c = context.redislib.incr_sliding_window("ip_limit.BURST_WINDOW" + request_info.network.compressed, BURST_WINDOW)
     if c > BURST_MAX:
-        return too_many_requests(network, "too many request in BURST_WINDOW (BURST_MAX)")
+        return too_many_requests(request_info, "too many request in BURST_WINDOW (BURST_MAX)")
 
-    c = redislib.incr_sliding_window("ip_limit.LONG_WINDOW" + network.compressed, LONG_WINDOW)
+    c = context.redislib.incr_sliding_window("ip_limit.LONG_WINDOW" + request_info.network.compressed, LONG_WINDOW)
     if c > LONG_MAX:
-        return too_many_requests(network, "too many request in LONG_WINDOW (LONG_MAX)")
+        return too_many_requests(request_info, "too many request in LONG_WINDOW (LONG_MAX)")
 
     return None

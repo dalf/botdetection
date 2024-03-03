@@ -78,7 +78,7 @@ return result
 """
 
 
-class RedisLib(Redis):
+class RedisLib:
     def __init__(self, redis: Redis, prefix: str, secret: str):
         self.redis = redis
         self.prefix = prefix

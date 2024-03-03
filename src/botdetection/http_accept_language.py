@@ -13,25 +13,18 @@ if the Accept-Language_ header is unset.
 """
 # pylint: disable=unused-argument
 from __future__ import annotations
-from ipaddress import (
-    IPv4Network,
-    IPv6Network,
-)
 
-from .redislib import RedisLib
 import flask
 import werkzeug
 
-from . import config
-from ._helpers import too_many_requests
+from . import RequestContext, RequestInfo, too_many_requests
 
 
 def filter_request(
-    redislib: RedisLib,
-    cfg: config.Config,
-    network: IPv4Network | IPv6Network,
+    context: RequestContext,
+    request_info: RequestInfo,
     request: flask.Request,
 ) -> werkzeug.Response | None:
     if request.headers.get("Accept-Language", "").strip() == "":
-        return too_many_requests(network, "missing HTTP header Accept-Language")
+        return too_many_requests(request_info, "missing HTTP header Accept-Language")
     return None

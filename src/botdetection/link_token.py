@@ -60,26 +60,18 @@ Implementations
 """
 
 from __future__ import annotations
-from ipaddress import (
-    IPv4Network,
-    IPv6Network,
-    ip_address,
-)
 
 import string
 import random
 import flask
+import logging
 
+from . import RequestInfo
 from .config import Config
 from .redislib import RedisLib
-from ._helpers import (
-    logger,
-    get_network,
-    get_real_ip,
-)
 
 
-logger = logger.getChild("link_token")
+logger = logging.getLogger(__name__)
 
 
 PING_KEY = "botdetection.link_token.PING_KEY"
@@ -89,97 +81,77 @@ TOKEN_KEY = "botdetection.link_token.TOKEN_KEY"
 """Key for which the current token is stored in the DB"""
 
 
-def is_suspicious(
-    redislib: RedisLib,
-    config: Config,
-    network: IPv4Network | IPv6Network,
-    request: flask.Request,
-    renew: bool = False,
-):
-    """Checks whether a valid ping is exists for this (client) network, if not
-    this request is rated as *suspicious*.  If a valid ping exists and argument
-    ``renew`` is ``True`` the expire time of this ping is reset to
-    ``PING_LIVE_TIME``.
+def get_link_token(redislib: RedisLib | None, config: Config, request_info: RequestInfo, request: flask.Request):
+    if redislib:
+        return LinkToken(redislib, config, request_info, request)
+    return None
 
-    """
-    if not redislib.redis:
+
+class LinkToken:
+    def __init__(self, redislib: RedisLib, config: Config, request_info: RequestInfo, request: flask.Request):
+        self.redislib = redislib
+        self.config = config
+        self.request_info = request_info
+        clear_ping_key = self.request_info.network.compressed + request.headers.get("Accept-Language", "") + request.headers.get("User-Agent", "")
+        self.ping_key = PING_KEY + "[" + self.redislib.secret_hash(clear_ping_key) + "]"
+
+    def is_suspicious(self, renew: bool = False):
+        """Checks whether a valid ping is exists for this (client) network, if not
+        this request is rated as *suspicious*.  If a valid ping exists and argument
+        ``renew`` is ``True`` the expire time of this ping is reset to
+        ``PING_LIVE_TIME``.
+
+        """
+        if not self.redislib.redis.get(self.ping_key):
+            logger.info("missing ping (IP: %s) / request: %s", self.request_info.network.compressed, self.ping_key)
+            return True
+
+        if renew:
+            self.redislib.redis.set(self.ping_key, 1, ex=self.config.botdetection.link_token.ping_live_time)
+
+        logger.debug("found ping for (client) network %s -> %s", self.request_info.network.compressed, self.ping_key)
         return False
 
-    ping_key = get_ping_key(network, request)
-    if not redislib.redis.get(ping_key):
-        logger.info("missing ping (IP: %s) / request: %s", network.compressed, ping_key)
-        return True
+    def ping(self, token: str):
+        """This function is called by a request to URL ``/client<token>.css``.  If
+        ``token`` is valid a :py:obj:`PING_KEY` for the client is stored in the DB.
+        The expire time of this ping-key is ``PING_LIVE_TIME``.
 
-    if renew:
-        redislib.redis.set(ping_key, 1, ex=config.botdetection.link_token.ping_live_time)
+        """
+        if not self.is_token_valid(token):
+            return
 
-    logger.debug("found ping for (client) network %s -> %s", network.compressed, ping_key)
-    return False
-
-
-def ping(redislib: RedisLib, config: Config, request: flask.Request, token: str):
-    """This function is called by a request to URL ``/client<token>.css``.  If
-    ``token`` is valid a :py:obj:`PING_KEY` for the client is stored in the DB.
-    The expire time of this ping-key is ``PING_LIVE_TIME``.
-
-    """
-    if not redislib.redis:
-        return
-    if not token_is_valid(redislib, config, token):
-        return
-
-    real_ip = ip_address(get_real_ip(config, request))
-    network = get_network(config, real_ip)
-
-    ping_key = get_ping_key(redislib, network, request)
-    logger.debug(
-        "store ping_key for (client) network %s (IP %s) -> %s",
-        network.compressed,
-        real_ip,
-        ping_key,
-    )
-
-    redislib.redis.set(ping_key, 1, ex=config.botdetection.link_token.ping_live_time)
-
-
-def get_ping_key(redislib: RedisLib, network: IPv4Network | IPv6Network, request: flask.Request) -> str:
-    """Generates a hashed key that fits (more or less) to a *WEB-browser
-    session* in a network."""
-    return (
-        PING_KEY
-        + "["
-        + redislib.secret_hash(
-            network.compressed + request.headers.get("Accept-Language", "") + request.headers.get("User-Agent", ""),
+        logger.debug(
+            "store ping_key for (client) network %s (IP %s) -> %s",
+            self.network.compressed,
+            self.real_ip,
+            self.ping_key,
         )
-        + "]"
-    )
 
+        self.redislib.redis.set(self.ping_key, 1, ex=self.config.botdetection.link_token.ping_live_time)
 
-def token_is_valid(redislib: RedisLib, config: Config, token) -> bool:
-    valid = token == get_token(redislib, config)
-    logger.debug("token is valid --> %s", valid)
-    return valid
+    def is_token_valid(self, token) -> bool:
+        valid = token == self.get_token()
+        logger.debug("token is valid --> %s", valid)
+        return valid
 
+    def get_token(self) -> str:
+        """Returns current token.  If there is no currently active token a new token
+        is generated randomly and stored in the redis DB.
 
-def get_token(redislib: RedisLib, config: Config) -> str:
-    """Returns current token.  If there is no currently active token a new token
-    is generated randomly and stored in the redis DB.
+        Config:
 
-    Config:
+        - ``TOKEN_LIVE_TIME``
+        - ``TOKEN_KEY``
 
-    - ``TOKEN_LIVE_TIME``
-    - ``TOKEN_KEY``
-
-    """
-    if not redislib.redis:
-        # This function is also called when limiter is inactive / no redis DB
-        # (see render function in webapp.py)
-        return "12345678"
-    token_key = config.botdetection.link_token.token_key
-    token = redislib.redis.get(token_key)
-    if token:
-        token = token.decode("UTF-8")
-    else:
-        token = "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(16))
-        redislib.redis.set(token_key, token, ex=config.botdetection.link_token.token_live_time)
-    return token
+        """
+        token_key = self.config.botdetection.link_token.token_key
+        token = self.redislib.redis.get(token_key)
+        if token:
+            # existing token
+            token = token.decode("UTF-8")
+        else:
+            # no existing token --> create and store a new one
+            token = "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(16))
+            self.redislib.redis.set(token_key, token, ex=self.config.botdetection.link_token.token_live_time)
+        return token

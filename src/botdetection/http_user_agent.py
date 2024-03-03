@@ -16,17 +16,11 @@ the User-Agent_ header is unset or matches the regular expression
 
 from __future__ import annotations
 import re
-from ipaddress import (
-    IPv4Network,
-    IPv6Network,
-)
 
-from .redislib import RedisLib
 import flask
 import werkzeug
 
-from . import config
-from ._helpers import too_many_requests
+from . import RequestContext, RequestInfo, too_many_requests
 
 
 USER_AGENT = (
@@ -57,12 +51,11 @@ def regexp_user_agent():
 
 
 def filter_request(
-    redislib: RedisLib,
-    cfg: config.Config,
-    network: IPv4Network | IPv6Network,
+    context: RequestContext,
+    request_info: RequestInfo,
     request: flask.Request,
 ) -> werkzeug.Response | None:
     user_agent = request.headers.get("User-Agent", "unknown")
     if regexp_user_agent().match(user_agent):
-        return too_many_requests(network, f"bot detected, HTTP header User-Agent: {user_agent}")
+        return too_many_requests(request_info, f"bot detected, HTTP header User-Agent: {user_agent}")
     return None

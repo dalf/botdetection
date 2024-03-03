@@ -1,10 +1,6 @@
 from __future__ import annotations
-from ipaddress import (
-    IPv4Network,
-    IPv6Network,
-)
 
-from botdetection import RedisLib, Config, too_many_requests
+from botdetection import RequestContext, RequestInfo, too_many_requests
 
 import flask
 import werkzeug
@@ -18,12 +14,11 @@ API_MAX = 4
 
 
 def api_rate_filter_request(
-    redislib: RedisLib,
-    cfg: Config,
-    network: IPv4Network | IPv6Network,
+    context: RequestContext,
+    request_info: RequestInfo,
     request: flask.Request,
 ) -> werkzeug.Response | None:
     if request.args.get("format", "html") != "html":
-        c = redislib.incr_sliding_window("ip_limit.API_WINDOW:" + network.compressed, API_WINDOW)
+        c = context.redislib.incr_sliding_window("ip_limit.API_WINDOW:" + request_info.network.compressed, API_WINDOW)
         if c > API_MAX:
-            return too_many_requests(network, "too many request in API_WINDOW")
+            return too_many_requests(request_info, "too many request in API_WINDOW")

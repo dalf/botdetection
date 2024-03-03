@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from enum import Enum
 
 import botdetection.http_accept
@@ -6,9 +7,15 @@ import botdetection.http_accept_language
 import botdetection.http_connection
 import botdetection.http_user_agent
 import botdetection.ip_limit
-from ._helpers import too_many_requests
+from ._helpers import (
+    get_network,
+    get_real_ip,
+    too_many_requests,
+)
 
 from ipaddress import (
+    IPv4Address,
+    IPv6Address,
     IPv4Network,
     IPv6Network,
     ip_address,
@@ -19,17 +26,18 @@ from flask import Flask, Response, Request, request, render_template_string, mak
 import werkzeug
 from redis import Redis
 
-from botdetection._helpers import get_network, get_real_ip
 from botdetection.config import Config
 from botdetection.redislib import RedisLib
-import botdetection.link_token as link_token
+from botdetection.link_token import LinkToken, get_link_token
 import botdetection.ip_lists as ip_lists
 
 
 __all__ = [
     "too_many_requests",
     "Config",
-    "BotFilter",
+    "RequestContext",
+    "RequestInfo",
+    "PredefinedRequestFilter",
     "RedisLib",
     "install_botdetection",
 ]
@@ -38,22 +46,34 @@ __all__ = [
 logger = getLogger(__name__)
 
 
-class Filter:
+@dataclass
+class RequestContext:
+    config: Config
+    redislib: RedisLib | None
+    link_token: LinkToken | None
+
+
+@dataclass
+class RequestInfo:
+    real_ip: IPv4Address | IPv6Address
+    network: IPv4Network | IPv6Network
+
+
+class RequestFilter:
     def __call__(
         self,
-        redis: RedisLib,
-        config: Config,
-        network: IPv4Network | IPv6Network,
+        context: RequestContext,
+        request_info: RequestInfo,
         request: Request,
     ) -> werkzeug.Response | None:
         return None
 
 
-def install_botdetection(app: Flask, redis: Redis, config: Config, filter: Filter):
-    app.botdetection = BotDetection(app, redis, config, filter)
+def install_botdetection(app: Flask, redis: Redis, config: Config, request_filter: RequestFilter):
+    app.botdetection = BotDetection(app, redis, config, request_filter)
 
 
-class BotFilter(Enum):
+class PredefinedRequestFilter(Enum):
     http_accept = botdetection.http_accept.filter_request
     http_accept_encoding = botdetection.http_accept_encoding.filter_request
     http_accept_language = botdetection.http_accept_language.filter_request
@@ -62,15 +82,14 @@ class BotFilter(Enum):
     ip_limit = botdetection.ip_limit.filter_request
 
 
-class RouteFilter(Filter):
-    def __init__(self, filters: dict[str, list[BotFilter]]):
+class RouteFilter(RequestFilter):
+    def __init__(self, filters: dict[str, list[RequestFilter | PredefinedRequestFilter]]):
         self.filters = filters
 
     def __call__(
         self,
-        redis: RedisLib,
-        config: Config,
-        network: IPv4Network | IPv6Network,
+        context: RequestContext,
+        request_info: RequestInfo,
         request: Request,
     ) -> werkzeug.Response | None:
         # FIXME: request.path is not the route
@@ -79,22 +98,22 @@ class RouteFilter(Filter):
             f_list = self.filters.get("*")
         if isinstance(f_list, list):
             for f in f_list:
-                if isinstance(f, BotFilter):
+                if isinstance(f, PredefinedRequestFilter):
                     f = f.value
-                val = f(redis, config, network, request)
+                val = f(context, request_info, request)
                 if val is not None:
                     return val
         return None
 
 
 class BotDetection:
-    def __init__(self, app: Flask, redis: Redis, config: Config, filter: Filter):
+    def __init__(self, app: Flask, redis: Redis, config: Config, request_filter: RequestFilter):
         self.app = app
         self.config = config
-        self.filter = filter
+        self.request_filter = request_filter
         prefix = config.botdetection.redis.prefix
         secret = config.botdetection.redis.secret_hash
-        self.redislib = RedisLib(redis, prefix, secret)
+        self.redislib = RedisLib(redis, prefix, secret) if redis else None
         self.register_jinja_globals()
         self.register_endpoints()
         self.register_before_request()
@@ -104,8 +123,21 @@ class BotDetection:
         def before_request():
             real_ip = ip_address(get_real_ip(self.config, request))
             network = get_network(self.config, real_ip)
-            if network.is_link_local:
+            request_info = RequestInfo(real_ip, network)
+
+            link_token = get_link_token(self.redislib, self.config, request_info, request)
+            context = RequestContext(self.config, self.redislib, link_token)
+
+            request.botdetection_context = context
+            request.botdetection_request_info = request_info
+
+            if request_info.network.is_link_local and not context.config.botdetection.ip_limit.filter_link_local:
+                logger.debug(
+                    "network %s is link-local -> not monitored by ip_limit method",
+                    request_info.network.compressed,
+                )
                 return None
+
             # block- & pass- lists
             #
             # 1. The IP of the request is first checked against the pass-list; if the IP
@@ -114,29 +146,23 @@ class BotDetection:
             #    the block list; if the IP matches an entry in the list, the request is
             #    blocked.
             # 3. If the IP is not in either list, the request is not blocked.
-
-            match, msg = ip_lists.pass_ip(real_ip, self.config)
+            match, msg = ip_lists.pass_ip(request_info.real_ip, self.config)
             if match:
-                logger.warning("PASS %s: matched PASSLIST - %s", network.compressed, msg)
+                logger.warning("PASS %s: matched PASSLIST - %s", request_info.network.compressed, msg)
                 return None
 
-            match, msg = ip_lists.block_ip(real_ip, self.config)
+            match, msg = ip_lists.block_ip(request_info.real_ip, self.config)
             if match:
-                logger.error("BLOCK %s: matched BLOCKLIST - %s", network.compressed, msg)
+                logger.error("BLOCK %s: matched BLOCKLIST - %s", request_info.network.compressed, msg)
                 return make_response(("IP is on BLOCKLIST - %s" % msg, 429))
 
-            # HERE : use self.config to pick the filters according to the route
-            response = self.filter(self.redislib, self.config, network, request)
+            # apply the filter(s)
+            response = self.request_filter(context, request_info, request)
             if response is not None:
                 return response
 
+            # the request is accepted
             return None
-
-    # def is_bot_request(self, environ):
-    #     # Implement your bot detection logic based on self.config
-    #     # Example:
-    #     user_agent = environ.get('HTTP_USER_AGENT', '')
-    #     return 'bot' in user_agent.lower()
 
     def register_jinja_globals(self):
         template_string = """
@@ -146,7 +172,8 @@ class BotDetection:
         @self.app.context_processor
         def inject_bot_detector():
             def botdetection_html_header():
-                html = render_template_string(template_string, link_token=link_token.get_token(self.redislib, self.config))
+                token = request.botdetection_context.link_token.get_token()
+                html = render_template_string(template_string, link_token=token)
                 # find the equivalent of flask.Markup and use it
                 return html
 
@@ -155,5 +182,5 @@ class BotDetection:
     def register_endpoints(self):
         @self.app.route("/client<token>.css", methods=["GET"])
         def client_token(token=None):
-            link_token.ping(self.redislib, self.config, request, token)
+            request.botdetection_context.link_token.ping(token)
             return Response("", mimetype="text/css")

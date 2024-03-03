@@ -14,6 +14,7 @@ from ipaddress import (
 import flask
 import werkzeug
 
+from . import RequestInfo
 from .config import Config
 
 logger = logging.getLogger("botdetection")
@@ -35,14 +36,14 @@ def dump_request(request: flask.Request):
     )
 
 
-def too_many_requests(network: IPv4Network | IPv6Network, log_msg: str) -> werkzeug.Response | None:
+def too_many_requests(request_info: RequestInfo, log_msg: str) -> werkzeug.Response | None:
     """Returns a HTTP 429 response object and writes a ERROR message to the
     'botdetection' logger.  This function is used in part by the filter methods
     to return the default ``Too Many Requests`` response.
 
     """
 
-    logger.debug("BLOCK %s: %s", network.compressed, log_msg)
+    logger.debug("BLOCK %s: %s", request_info.network.compressed, log_msg)
     return flask.make_response(("Too Many Requests", 429))
 
 

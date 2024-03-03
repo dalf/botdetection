@@ -30,3 +30,22 @@ packages = ["src/botdetection"]
 
 [tool.ruff]
 line-length = 160
+
+[tool.pylint]
+max-line-length = 160
+
+[tool.pylint."messages_control"]
+disable = [
+    "W0603", # Using the global statement
+    "W0613", # Unused argument 'ndocs'
+    "W0511", # TODO
+    "W0105", # String statement has no effect
+    "R",
+    "R0912", # Too many branches
+    "R0915", # Too many statements
+    "R1702", # Too many nested blocks
+    "R0913", # Too many arguments
+    "R0914", # Too many local variables
+    "R0902", # Too many instance attributes
+    "C",
+]
