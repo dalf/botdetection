@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # lint: pylint
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from ipaddress import (
     IPv4Address,
